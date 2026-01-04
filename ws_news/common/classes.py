@@ -1,0 +1,126 @@
+from abc import ABC, ABCMeta, abstractmethod
+from datetime import datetime
+from typing import Dict, Generic, List, Type, TypeVar
+from bs4 import BeautifulSoup
+import requests
+import json
+
+from sqlalchemy import insert, select, update
+
+from ws_news.common.database import Article, get_connection, get_session
+
+
+class AbcPagination:
+    _navigation_attr: Dict[str, str]
+    _next_page_attr: Dict[str, str]
+
+    def get_navigation_attr(self) -> Dict[str, str]:
+        return self._navigation_attr
+
+    def get_next_page_attr(self) -> Dict[str, str]:
+        return self._next_page_attr
+
+
+class EstadaoPagination(AbcPagination):
+    _navigation_attr = {"class": "container-pagination"}
+    _next_page_attr = {"class": "arrow right "}
+
+
+class AbcArticle:
+    _url: str
+    _headline: str
+    _source: str
+    _paragraphs_attr: Dict[str, str]
+
+    def __init__(self, url: str, headline: str):
+        self._url = url
+        self._headline = headline
+
+    def get_url(self) -> str:
+        return self._url
+
+    def get_headline(self) -> str:
+        return self._headline
+
+    def get_source(self) -> str:
+        return self._source
+
+    def get_article_attr(self) -> Dict[str, str]:
+        return self._paragraphs_attr
+
+    def get_article_text(self) -> str:
+        res = requests.get(self._url)
+        soup = BeautifulSoup(res.content.decode("utf-8"), "html.parser")
+        elements = soup.find_all(attrs=self._paragraphs_attr)
+
+        if len(elements) <= 0:
+            print("Nenhum paragrafo encontrado")
+
+        return "".join([element.text for element in elements])
+
+    def upsert_article(self):
+        with get_session() as session:
+            url = self.get_url()
+            headline = self.get_headline()
+            text = self.get_article_text()
+            source = self.get_source()
+
+            article = session.query(Article).filter(Article.url == url).first()
+
+            if article:
+                stmt = (
+                    update(Article)
+                    .where(Article.url == url)
+                    .values(text=text, headline=headline, updated_at=datetime.now())
+                )
+
+            else:
+                stmt = insert(Article).values(
+                    url=url,
+                    headline=headline,
+                    text=text,
+                    source=source,
+                )
+
+            session.execute(stmt)
+
+
+class EstadaoArticle(AbcArticle):
+    _paragraphs_attr = {"data-component-name": "paragraph"}
+    _source = "Estadao"
+
+
+class AbcNews(ABC):
+    _base_url: str
+    _article_class: Type[AbcArticle]
+    _articles_attr: Dict[str, str]
+
+    @abstractmethod
+    def get_search_url(self, search_text: str) -> str:
+        raise Exception("Not implemented")
+
+    def get_articles(self, search_text: str) -> List[AbcArticle]:
+        url = self.get_search_url(search_text)
+        res = requests.get(url)
+        soup = BeautifulSoup(res.content.decode("utf-8"), "html.parser")
+        elements = soup.find_all(attrs=self._articles_attr)
+
+        if len(elements) <= 0:
+            print("Nenhum artigo encontrado")
+
+        return [
+            self._article_class(
+                url=element.attrs["href"], headline=element.attrs["title"]
+            )
+            for element in elements
+        ]
+
+
+class EstadaoNews(AbcNews):
+    _base_url = "https://www.estadao.com.br"
+    _articles_attr = {"class": "image-noticias"}
+    _article_class = EstadaoArticle
+
+    def get_search_url(self, search_text: str) -> str:
+        query = {"query": search_text}
+        return self._base_url + "/busca?token=" + json.dumps(query)
