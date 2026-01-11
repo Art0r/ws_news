@@ -8,3 +8,4 @@ if __name__ == "__main__":
     en = EstadaoNews()
     articles = en.get_articles("Tarcisio")
     print(articles[0].upsert_article())
+    en.go_to_next_page()

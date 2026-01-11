@@ -5,25 +5,12 @@ from bs4 import BeautifulSoup
 import requests
 import json
 
+from selenium.webdriver.common.by import By
+from selenium.webdriver.remote.webdriver import WebDriver
 from sqlalchemy import insert, select, update
 
 from ws_news.common.database import Article, get_connection, get_session
-
-
-class AbcPagination:
-    _navigation_attr: Dict[str, str]
-    _next_page_attr: Dict[str, str]
-
-    def get_navigation_attr(self) -> Dict[str, str]:
-        return self._navigation_attr
-
-    def get_next_page_attr(self) -> Dict[str, str]:
-        return self._next_page_attr
-
-
-class EstadaoPagination(AbcPagination):
-    _navigation_attr = {"class": "container-pagination"}
-    _next_page_attr = {"class": "arrow right "}
+from selenium import webdriver
 
 
 class AbcArticle:
@@ -94,15 +81,21 @@ class AbcNews(ABC):
     _base_url: str
     _article_class: Type[AbcArticle]
     _articles_attr: Dict[str, str]
+    _navigation_attr: Dict[str, str]
+    _next_page_attr: Dict[str, str]
+    _driver: WebDriver
+
+    def __init__(self):
+        self._driver = webdriver.Firefox()
 
     @abstractmethod
     def get_search_url(self, search_text: str) -> str:
         raise Exception("Not implemented")
 
     def get_articles(self, search_text: str) -> List[AbcArticle]:
-        url = self.get_search_url(search_text)
-        res = requests.get(url)
-        soup = BeautifulSoup(res.content.decode("utf-8"), "html.parser")
+        page_source = self.go_to_search_page(search_text)
+
+        soup = BeautifulSoup(page_source, "html.parser")
         elements = soup.find_all(attrs=self._articles_attr)
 
         if len(elements) <= 0:
@@ -115,11 +108,27 @@ class AbcNews(ABC):
             for element in elements
         ]
 
+    def go_to_search_page(self, search_text: str) -> str:
+        url = self.get_search_url(search_text)
+
+        self._driver.get(url)
+        return self._driver.page_source
+
+    def go_to_next_page(self):
+        next_button = self._driver.find_element(
+            by=By.XPATH,
+            value="//button[contains(@class, 'arrow') and contains(@class, 'right')]",
+        )
+
+        next_button.click()
+
 
 class EstadaoNews(AbcNews):
     _base_url = "https://www.estadao.com.br"
     _articles_attr = {"class": "image-noticias"}
     _article_class = EstadaoArticle
+    _navigation_attr = {"class": "container-pagination"}
+    _next_page_attr = {"class": "arrow right "}
 
     def get_search_url(self, search_text: str) -> str:
         query = {"query": search_text}
