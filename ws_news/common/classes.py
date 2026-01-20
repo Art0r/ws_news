@@ -1,10 +1,14 @@
 from abc import ABC, ABCMeta, abstractmethod
 from datetime import datetime
-from typing import Dict, Generic, List, Type, TypeVar
+from time import sleep
+from typing import Dict, Generic, List, Optional, Type, TypeVar
 from bs4 import BeautifulSoup
 import requests
 import json
 
+from selenium.webdriver.remote.webelement import WebElement
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 from selenium.webdriver.remote.webdriver import WebDriver
 from sqlalchemy import insert, select, update
@@ -83,27 +87,34 @@ class AbcNews(ABC):
     _articles_attr: Dict[str, str]
     _navigation_attr: Dict[str, str]
     _next_page_attr: Dict[str, str]
+    _maximum_depth: int
+    _current_depth: int
     _driver: WebDriver
 
-    def __init__(self):
+    def __init__(self, maximum_depth: int = 5):
+        self._maximum_depth = maximum_depth
+        self._current_depth = 0
         self._driver = webdriver.Firefox()
 
     @abstractmethod
     def get_search_url(self, search_text: str) -> str:
         raise Exception("Not implemented")
 
-    def get_articles(self, search_text: str) -> List[AbcArticle]:
-        page_source = self.go_to_search_page(search_text)
-
-        soup = BeautifulSoup(page_source, "html.parser")
-        elements = soup.find_all(attrs=self._articles_attr)
+    def get_articles(self) -> List[AbcArticle]:
+        wait = WebDriverWait(self._driver, 10)
+        elements: List[WebElement] = wait.until(
+            EC.presence_of_all_elements_located(
+                (By.CLASS_NAME, self._articles_attr["class"])
+            )
+        )
 
         if len(elements) <= 0:
             print("Nenhum artigo encontrado")
 
         return [
             self._article_class(
-                url=element.attrs["href"], headline=element.attrs["title"]
+                url=element.get_attribute("href") or "",
+                headline=element.get_attribute("title") or "",
             )
             for element in elements
         ]
@@ -121,6 +132,17 @@ class AbcNews(ABC):
         )
 
         next_button.click()
+
+    def run(self, search: str):
+        self.go_to_search_page(search)
+
+        while self._current_depth < self._maximum_depth:
+            articles = self.get_articles()
+            print(articles)
+            self.go_to_next_page()
+            self._current_depth += 1
+
+        self._driver.close()
 
 
 class EstadaoNews(AbcNews):
