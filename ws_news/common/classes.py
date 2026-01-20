@@ -1,4 +1,5 @@
 from abc import ABC, ABCMeta, abstractmethod
+from contextlib import contextmanager
 from datetime import datetime
 from time import sleep
 from typing import Dict, Generic, List, Optional, Type, TypeVar
@@ -12,7 +13,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 from selenium.webdriver.remote.webdriver import WebDriver
 from sqlalchemy import insert, select, update
-
+from selenium.common.exceptions import ElementClickInterceptedException
 from ws_news.common.database import Article, get_connection, get_session
 from selenium import webdriver
 
@@ -81,6 +82,11 @@ class EstadaoArticle(AbcArticle):
     _source = "Estadao"
 
 
+class GUmArticle(AbcArticle):
+    _paragraphs_attr = {"class": "content-text__container"}
+    _source = "G1"
+
+
 class AbcNews(ABC):
     _base_url: str
     _article_class: Type[AbcArticle]
@@ -94,7 +100,12 @@ class AbcNews(ABC):
     def __init__(self, maximum_depth: int = 5):
         self._maximum_depth = maximum_depth
         self._current_depth = 0
-        self._driver = webdriver.Firefox()
+
+        options = webdriver.FirefoxOptions()
+        # options.page_load_strategy = "eager"
+        # options.add_argument("--headless")
+
+        self._driver = webdriver.Firefox(options=options)
 
     @abstractmethod
     def get_search_url(self, search_text: str) -> str:
@@ -126,23 +137,47 @@ class AbcNews(ABC):
         return self._driver.page_source
 
     def go_to_next_page(self):
-        next_button = self._driver.find_element(
-            by=By.XPATH,
-            value="//button[contains(@class, 'arrow') and contains(@class, 'right')]",
-        )
+        try:
+            wait = WebDriverWait(self._driver, 10)
+            next_button: WebElement = wait.until(
+                EC.element_to_be_clickable(
+                    (
+                        By.XPATH,
+                        "//button[contains(@class, 'arrow') and contains(@class, 'right')]",
+                    )
+                )
+            )
 
-        next_button.click()
+            self._driver.execute_script(
+                "arguments[0].scrollIntoView({block: 'center', behavior: 'smooth'});",
+                next_button,
+            )
+
+            sleep(0.5)
+
+            next_button.click()
+        except ElementClickInterceptedException as e:
+            print(
+                "Ocorreu um erro ao ir para a página seguinte: {0} | Pagina atual: {1}".format(
+                    e, self._current_depth
+                )
+            )
+            self._driver.close()
 
     def run(self, search: str):
-        self.go_to_search_page(search)
+        try:
+            self.go_to_search_page(search)
 
-        while self._current_depth < self._maximum_depth:
-            articles = self.get_articles()
-            print(articles)
-            self.go_to_next_page()
-            self._current_depth += 1
+            while self._current_depth < self._maximum_depth:
+                articles = self.get_articles()
+                print(articles)
+                self.go_to_next_page()
+                self._current_depth += 1
 
-        self._driver.close()
+            self._driver.close()
+        except Exception as e:
+            print(e)
+            self._driver.close()
 
 
 class EstadaoNews(AbcNews):
@@ -155,3 +190,14 @@ class EstadaoNews(AbcNews):
     def get_search_url(self, search_text: str) -> str:
         query = {"query": search_text}
         return self._base_url + "/busca?token=" + json.dumps(query)
+
+
+class GUmNews(AbcNews):
+    _base_url = "https://g1.globo.com"
+    _articles_attr = {"class": "widget--info__media"}
+    _article_class = GUmArticle
+    _navigation_attr = {"class": "pagination"}
+    _next_page_attr = {"class": "pagination__load-more"}
+
+    def get_search_url(self, search_text: str) -> str:
+        return self._base_url + "/busca/?q=" + search_text
