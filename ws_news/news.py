@@ -4,13 +4,13 @@ from time import sleep
 from typing import List, Type
 
 from selenium.webdriver.remote.webelement import WebElement
-from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 from selenium.webdriver.remote.webdriver import WebDriver
 from selenium.common.exceptions import ElementClickInterceptedException
+from selenium.webdriver.support.wait import WebDriverWait
 
-from ws_news.article import AbcArticle, CNNArticle
+from ws_news.article import AbcArticle, CNNArticle, GUmArticle
 from ws_news.helpers import get_xpath, get_driver
 from ws_news.types import HtmlTag
 
@@ -24,11 +24,12 @@ class AbcNews(ABC):
     _current_depth: int
     _driver: WebDriver
     _articles_queue: SimpleQueue[Type[AbcArticle]]
+    _wait = WebDriverWait
 
     def __init__(self, maximum_depth: int = 2):
         self._maximum_depth = maximum_depth
         self._current_depth = 0
-        self._driver = get_driver()
+        self._driver, self._wait = get_driver()
         self._articles_queue = SimpleQueue()
 
     @abstractmethod
@@ -47,8 +48,7 @@ class AbcNews(ABC):
     def go_to_next_page(self):
         try:
             xpath = get_xpath(self._next_page)
-            wait = WebDriverWait(self._driver, 10)
-            next_button: WebElement = wait.until(
+            next_button: WebElement = self._wait.until(
                 EC.element_to_be_clickable((By.XPATH, xpath))
             )
 
@@ -73,15 +73,14 @@ class AbcNews(ABC):
             self.go_to_search_page(search)
 
             while self._current_depth < self._maximum_depth:
-                xpath = get_xpath(self._article_link)
+                if self._article_link._xpath:
+                    xpath = self._article_link._xpath
+                else:
+                    xpath = get_xpath(self._article_link)
 
-                wait = WebDriverWait(self._driver, 10)
-                elements: List[WebElement] = wait.until(
+                elements: List[WebElement] = self._wait.until(
                     EC.presence_of_all_elements_located((By.XPATH, xpath))
                 )
-
-                if len(elements) <= 0:
-                    print("Nenhum artigo encontrado")
 
                 for element in elements:
                     self._articles_queue.put(
@@ -101,36 +100,26 @@ class AbcNews(ABC):
             self._driver.close()
 
 
-# class EstadaoNews(AbcNews):
-#     _base_url = "https://www.estadao.com.br"
-#     _articles_attr = {"class": "image-noticias"}
-#     _article_class = EstadaoArticle
-#     _navigation_attr = {"class": "container-pagination"}
-#     _next_page_attr = {"class": "arrow right "}
-#
-#     def get_search_url(self, search_text: str) -> str:
-#         query = {"query": search_text}
-#         return self._base_url + "/busca?token=" + json.dumps(query)
-#
-#
-# class GUmNews(AbcNews):
-#     _base_url = "https://g1.globo.com"
-#     _articles_attr = {"class": "widget--info__media"}
-#     _article_class = GUmArticle
-#     _navigation_attr = {"class": "pagination"}
-#     _next_page_attr = {"class": "pagination__load-more"}
-#
-#     def get_search_url(self, search_text: str) -> str:
-#         return self._base_url + "/busca/?q=" + search_text
-#
-#
+class GUmNews(AbcNews):
+    _base_url = "https://g1.globo.com"
+    _article_link = HtmlTag(
+        _xpath="//div[@class='widget--info__text-container']/a")
+    _next_page = HtmlTag(
+        _class="fundo-cor-produto pagination__load-more", _tag="button"
+    )
+    _article_class = GUmArticle
+
+    def get_search_url(self, search_text: str) -> str:
+        return self._base_url + "/busca/?q=" + search_text
+
+
 class CNNNews(AbcNews):
     _base_url = "https://www.cnnbrasil.com.br"
     _article_link = HtmlTag(_class="flex shrink-0 items-center", _tag="a")
-    _article_class = CNNArticle
     _next_page = HtmlTag(
         _class="inline-flex items-center px-2 py-1 text-red-600", _tag="a"
     )
+    _article_class = CNNArticle
 
     def get_search_url(self, search_text: str) -> str:
         return self._base_url + "/?search=" + search_text

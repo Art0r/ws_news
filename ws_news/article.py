@@ -1,5 +1,6 @@
 from typing import List
 
+from selenium import webdriver
 from selenium.webdriver.remote.webelement import WebElement
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -16,19 +17,19 @@ class AbcArticle:
     _headline: str
     _source: str
     _paragraphs_attr: HtmlTag
+    _driver: webdriver.Firefox
+    _wait: WebDriverWait
 
     def __init__(self, url: str, headline: str):
         self._url = url
         self._headline = headline
+        self._driver, self._wait = get_driver(self._url)
 
     def get_article_text(self) -> str | None:
-        driver = get_driver(self._url)
         try:
-            wait = WebDriverWait(driver, 10)
-
             xpath = get_xpath(self._paragraphs_attr)
 
-            elements: List[WebElement] = wait.until(
+            elements: List[WebElement] = self._wait.until(
                 EC.presence_of_all_elements_located((By.XPATH, xpath))
             )
 
@@ -40,7 +41,7 @@ class AbcArticle:
         except Exception as e:
             raise Exception(f"failed: {e.args}")
         finally:
-            driver.close()
+            self._driver.close()
 
     def is_article_already_saved(self) -> bool:
         url = self._url
@@ -79,15 +80,9 @@ class AbcArticle:
             print(f"Article inserted: {url}")
 
 
-# class EstadaoArticle(AbcArticle):
-#     _paragraphs_attr = {"data-component-name": "paragraph"}
-#     _source = "Estadao"
-#
-#
-# class GUmArticle(AbcArticle):
-#     _paragraphs_attr = {"class": "content-text__container"}
-#     _source = "G1"
-#
+class GUmArticle(AbcArticle):
+    _paragraphs_attr = HtmlTag(_class="content-text__container", _tag="p")
+    _source = "G1"
 
 
 class CNNArticle(AbcArticle):

@@ -1,5 +1,6 @@
+from selenium.webdriver.support.wait import WebDriverWait
 from ws_news.types import HtmlTag
-from typing import Optional
+from typing import Optional, Tuple
 from selenium import webdriver
 
 
@@ -12,14 +13,16 @@ def get_xpath(html_tag: HtmlTag) -> str:
     return xpath
 
 
-def get_driver(url: Optional[str] = None) -> webdriver.Firefox:
+def get_driver(url: Optional[str] = None) -> Tuple[webdriver.Firefox, WebDriverWait]:
     options = webdriver.FirefoxOptions()
     # options.page_load_strategy = "eager"
-    options.add_argument("--headless")
+    # options.add_argument("--headless")
 
     driver = webdriver.Firefox(options=options)
 
     if url:
         driver.get(url)
 
-    return driver
+    wait = WebDriverWait(driver, 10)
+
+    return driver, wait
